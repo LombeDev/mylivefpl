@@ -154,3 +154,12 @@ async def api_planner(request: Request):
     if not team:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
     return await fpl.planner_data(team)
+
+    @app.get("/api/match-review")
+async def api_match_review(request: Request):
+    team = current_team(request)
+    if not team:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    return await fpl.match_review(team)
+
+    

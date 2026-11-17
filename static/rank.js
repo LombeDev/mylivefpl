@@ -150,3 +150,104 @@ function refresh() {
 
 refresh();
 setInterval(refresh, 60_000);
+
+
+const TONE_STATUS = {
+  finished: { label: "Done", cls: "bg-white/10 text-gray-300" },
+  live: { label: "Live", cls: "bg-emerald-500/20 text-emerald-300" },
+  upcoming: { label: "Upcoming", cls: "bg-white/5 text-gray-500" },
+};
+
+function fixtureStatus(f) {
+  if (f.finished) return TONE_STATUS.finished;
+  if (f.started) return TONE_STATUS.live;
+  return TONE_STATUS.upcoming;
+}
+
+function eventLine(p) {
+  const bits = [];
+  if (p.goals) bits.push(`⚽ ${p.goals > 1 ? p.goals + " " : ""}${esc(p.name)}`);
+  if (p.assists) bits.push(`A ${esc(p.name)}`);
+  if (p.saves >= 3) bits.push(`🧤 ${p.saves} saves`);
+  if (p.yellow) bits.push(`🟨 ${esc(p.name)}`);
+  if (p.red) bits.push(`🟥 ${esc(p.name)}`);
+  if (p.clean_sheet && p.minutes >= 60) bits.push(`CS ${esc(p.name)}`);
+  if (p.defcon) bits.push(`DC ${esc(p.name)} (${p.defcon})`);
+  return bits;
+}
+
+function raceRow(p) {
+  const tone = p.provisional
+    ? "bg-amber-300/20 text-amber-300"
+    : p.bonus > 0 ? "bg-emerald-300/20 text-emerald-300" : "";
+  return `
+    <li class="flex items-center gap-2 py-1 text-sm">
+      <span class="w-6 text-xs font-semibold tabular-nums ${p.bonus ? "text-white" : "text-transparent"}">
+        ${p.bonus ? `+${p.bonus}` : "+0"}
+      </span>
+      <span class="${tone} rounded px-1 text-[10px] font-bold ${p.bonus ? "" : "invisible"}">${p.provisional ? "prov" : ""}</span>
+      <span class="min-w-0 flex-1 truncate ${p.mine ? "font-semibold text-white" : "text-gray-300"}">
+        ${p.mine ? '<span class="mr-1 text-emerald-400">●</span>' : ""}${esc(p.name)}
+      </span>
+      <span class="tabular-nums text-gray-400">${p.bps}</span>
+      <span class="w-10 text-right text-xs tabular-nums text-gray-500">${p.points} pts</span>
+    </li>`;
+}
+
+function fixtureCard(f) {
+  const st = fixtureStatus(f);
+  const score =
+    f.home_score == null ? "v" : `${f.home_score} – ${f.away_score}`;
+  const home = f.players.filter((p) => p.side === "h");
+  const away = f.players.filter((p) => p.side === "a");
+  const events = f.players.flatMap(eventLine);
+
+  const column = (list) =>
+    list.length
+      ? list.slice(0, 6).map(raceRow).join("")
+      : `<li class="py-1 text-sm text-gray-600">No bonus points yet</li>`;
+
+  return `
+    <article class="rounded-2xl border border-white/10 bg-gray-800/60 p-4">
+      <header class="mb-3 flex items-center justify-between">
+        <p class="text-base font-bold text-white">
+          ${esc(f.home)} <span class="mx-2 tabular-nums text-gray-300">${score}</span> ${esc(f.away)}
+        </p>
+        <span class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${st.cls}">${st.label}</span>
+      </header>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <p class="mb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500">${esc(f.home)} bonus race</p>
+          <ul class="divide-y divide-white/5">${column(home)}</ul>
+        </div>
+        <div>
+          <p class="mb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500">${esc(f.away)} bonus race</p>
+          <ul class="divide-y divide-white/5">${column(away)}</ul>
+        </div>
+      </div>
+
+      ${events.length
+        ? `<p class="mt-3 border-t border-white/5 pt-3 text-xs leading-relaxed text-gray-400">${events.join(" · ")}</p>`
+        : ""}
+    </article>`;
+}
+
+async function loadMatches() {
+  try {
+    const res = await fetch("/api/match-review", { cache: "no-store" });
+    if (!res.ok) return;
+    const d = await res.json();
+    const box = document.getElementById("matches");
+    box.innerHTML = d.fixtures.length
+      ? d.fixtures.map(fixtureCard).join("")
+      : `<p class="text-sm text-gray-500">No fixtures this gameweek.</p>`;
+  } catch (_) {}
+}
+
+function refresh() {
+  if (document.visibilityState !== "visible") return;
+  load();
+  loadEstimate();
+  loadMatches();
+}

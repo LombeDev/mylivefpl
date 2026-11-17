@@ -443,7 +443,92 @@ async def planner_data(team_id: int) -> dict:
         "fixtures": fixture_rows,
     }
 
+# ---------- match review ----------
 
+def _stat(stats: dict, key: str) -> int:
+    return stats.get(key, {}).get("value", 0)
+
+
+async def match_review(team_id: int) -> dict:
+    boot = await bootstrap()
+    gw = current_event(boot["events"])["id"]
+    els = {e["id"]: e for e in boot["elements"]}
+    teams = {t["id"]: t["short_name"] for t in boot["teams"]}
+
+    fixtures, live, picks = await asyncio.gather(
+        get(f"fixtures/?event={gw}", ttl=60),
+        get(f"event/{gw}/live/", ttl=30),
+        get(f"entry/{team_id}/event/{gw}/picks/", ttl=30),
+    )
+
+    mine = {p["element"] for p in picks["picks"]}
+    prov = provisional_bonus(live["elements"], fixtures)
+    fx_by_id = {f["id"]: f for f in fixtures}
+    per_fixture: dict[int, list[dict]] = defaultdict(list)
+
+    for el in live["elements"]:
+        pid = el["id"]
+        player = els.get(pid)
+        if not player:
+            continue
+
+        for ex in el.get("explain", []):
+            fx = fx_by_id.get(ex["fixture"])
+            if not fx:
+                continue
+
+            stats = {s["identifier"]: s for s in ex["stats"]}
+            bps = _stat(stats, "bps")
+            if bps == 0 and _stat(stats, "minutes") == 0:
+                continue
+
+            # Confirmed bonus once the match finishes; provisional before that.
+            # Provisional awards are summed per player, so double gameweeks
+            # may show the combined figure in this view.
+            if fx["finished"]:
+                bonus = stats["bonus"]["points"] if "bonus" in stats else 0
+            else:
+                bonus = prov.get(pid, 0)
+
+            per_fixture[fx["id"]].append({
+                "name": player["web_name"],
+                "team": teams.get(player["team"], ""),
+                "side": "h" if player["team"] == fx["team_h"] else "a",
+                "points": sum(
+                    s["points"] for s in ex["stats"]
+                    if s["identifier"] not in ("bps", "bonus")
+                ) + bonus,
+                "bps": bps,
+                "bonus": bonus,
+                "provisional": not fx["finished"] and bonus > 0,
+                "minutes": _stat(stats, "minutes"),
+                "goals": _stat(stats, "goals_scored"),
+                "assists": _stat(stats, "assists"),
+                "saves": _stat(stats, "saves"),
+                "yellow": _stat(stats, "yellow_cards"),
+                "red": _stat(stats, "red_cards"),
+                "clean_sheet": _stat(stats, "clean_sheets") > 0,
+                "defcon": _stat(stats, "defensive_contribution"),
+                "mine": pid in mine,
+            })
+
+    out = []
+    for fx in sorted(fixtures, key=lambda f: f.get("kickoff_time") or ""):
+        players = per_fixture.get(fx["id"], [])
+        players.sort(key=lambda p: (-p["bps"], p["name"]))
+        out.append({
+            "id": fx["id"],
+            "home": teams.get(fx["team_h"], ""),
+            "away": teams.get(fx["team_a"], ""),
+            "home_score": fx["team_h_score"],
+            "away_score": fx["team_a_score"],
+            "kickoff": fx.get("kickoff_time"),
+            "started": fx["started"],
+            "finished": fx["finished"],
+            "players": players,
+        })
+
+    return {"gw": gw, "fixtures": out}
 
 
 
